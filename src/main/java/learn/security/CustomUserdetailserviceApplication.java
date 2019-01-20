@@ -1,5 +1,6 @@
 package learn.security;
 
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.annotation.Bean;
@@ -9,9 +10,10 @@ import org.springframework.security.config.annotation.web.configuration.EnableWe
 import org.springframework.security.config.annotation.web.configuration.WebSecurityConfigurerAdapter;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
-import org.springframework.security.core.userdetails.UserDetails;
-import org.springframework.security.core.userdetails.UserDetailsService;
-import org.springframework.security.core.userdetails.UsernameNotFoundException;
+import org.springframework.security.core.userdetails.*;
+import org.springframework.security.crypto.factory.PasswordEncoderFactories;
+import org.springframework.security.crypto.password.DelegatingPasswordEncoder;
+import org.springframework.security.crypto.password.MessageDigestPasswordEncoder;
 import org.springframework.security.crypto.password.NoOpPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -29,15 +31,22 @@ public class CustomUserdetailserviceApplication {
 
     @Bean
     PasswordEncoder passwordEncoder() {
-        return NoOpPasswordEncoder.getInstance();
+        //return NoOpPasswordEncoder.getInstance();
+        return PasswordEncoderFactories.createDelegatingPasswordEncoder();
+    }
+
+    //@Bean
+    PasswordEncoder oldPasswordEncoder() {
+        String md5 = "MD5";
+        return new DelegatingPasswordEncoder(md5, Collections.singletonMap(md5, new MessageDigestPasswordEncoder(md5)));
     }
 
     @Bean
     CustomUserDetailsService customUserDetailsService() {
 
         Collection<UserDetails> userDetails = Arrays.asList(
-                new CustomUserDetails("jlong", "password", true, new String[] {"USER"}),
-                new CustomUserDetails("rwinch", "password", true, "USER", "ADMIN")
+                new CustomUserDetails("jlong", oldPasswordEncoder().encode("password"), true, new String[] {"USER"}),
+                new CustomUserDetails("rwinch", oldPasswordEncoder().encode("password"), true, "USER", "ADMIN")
         );
 
         return new CustomUserDetailsService(userDetails);
@@ -72,12 +81,14 @@ class GreetingRestController {
 }
 
 
-class CustomUserDetailsService implements UserDetailsService {
+@Slf4j
+class CustomUserDetailsService implements UserDetailsService, UserDetailsPasswordService {
 
     private final Map<String, UserDetails> users = new ConcurrentHashMap<>();
 
     public CustomUserDetailsService(Collection<UserDetails> seedUsers) {
         seedUsers.forEach( user -> this.users.put(user.getUsername(), user));
+        users.forEach((k, v)-> log.info(k+" = "+v.getPassword()));
     }
 
     @Override
@@ -85,6 +96,18 @@ class CustomUserDetailsService implements UserDetailsService {
         if(this.users.containsKey(username))
             return this.users.get(username);
         throw new UsernameNotFoundException("couldn't find user "+ username);
+    }
+
+    @Override
+    public UserDetails updatePassword(UserDetails userDetails, String newPassword) {
+        log.info("prompt to change password of "+userDetails.getUsername()+" to "+newPassword);
+        this.users.put(userDetails.getUsername(), new CustomUserDetails(
+           userDetails.getUsername(),
+           newPassword,
+           userDetails.isEnabled(),
+           userDetails.getAuthorities().stream().map(GrantedAuthority::getAuthority).toArray(String[]::new)
+        ));
+        return this.loadUserByUsername(userDetails.getUsername());
     }
 }
 
